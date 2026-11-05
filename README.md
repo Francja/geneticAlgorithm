@@ -1,5 +1,7 @@
 # dnnga — evolve a network's layers and neurons with a genetic algorithm
 
+[![CI](https://github.com/xWuWux/geneticAlgorithm/actions/workflows/ci.yml/badge.svg)](https://github.com/xWuWux/geneticAlgorithm/actions/workflows/ci.yml)
+
 Give it a DNN (or just a list of hidden-layer widths) and some data; it searches
 for a better *structure* — more or fewer layers, wider or narrower layers — by
 evolving a population of candidate architectures, training each one, and keeping
@@ -252,6 +254,9 @@ pytest                                  # Keras tests auto-skip without TensorFl
 pytest --cov=dnnga --cov-report=term-missing
 python examples/iris_example.py         # also: target_accuracy_example.py, keras_example.py
 ```
+
+CI (`.github/workflows/ci.yml`) runs the suite on Python 3.9–3.13, a separate
+TensorFlow/Keras job with coverage, and a build-and-test-the-wheel job.
 
 Layout: `architecture.py` (genotype) · `config.py` · `operators.py`
 (mutation/crossover/selection) · `engine.py` (loop, `evolve_architecture`) ·

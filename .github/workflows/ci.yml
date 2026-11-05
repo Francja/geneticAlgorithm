@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[sklearn,dev]"
+
+      - name: Run test suite
+        run: python -m pytest -q --disable-warnings
+
+      - name: Run scikit-learn examples
+        if: matrix.python-version == '3.12'
+        run: |
+          python examples/iris_example.py
+          python examples/target_accuracy_example.py
+
+  keras:
+    name: tests (Python 3.12, Keras/TensorFlow)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package with TensorFlow
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[sklearn,dev]" "tensorflow-cpu>=2.16"
+
+      - name: Run full suite with coverage
+        run: |
+          python -m pytest -q --disable-warnings \
+            --cov=dnnga --cov-report=term-missing --cov-report=xml \
+            --cov-fail-under=95
+
+      - name: Run Keras example
+        run: python examples/keras_example.py
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: error
+
+  package:
+    name: build and test wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Install the wheel and run the tests against it
+        run: |
+          python -m pip install dist/*.whl "scikit-learn>=1.1" pytest
+          python -m pytest -q --disable-warnings
+
+      - name: Smoke-test the installed package
+        run: python -c "import dnnga; print('dnnga', dnnga.__version__)"
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/*
+          if-no-files-found: error
