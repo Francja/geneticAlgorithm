@@ -15,6 +15,9 @@ sklearn = ["scikit-learn>=1.1"]
 keras = ["tensorflow>=2.16"]
 dev = ["pytest>=7", "pytest-cov"]
 
+[project.scripts]
+dnnga = "dnnga.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
