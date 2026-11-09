@@ -2,5 +2,15 @@
 .idea
 # virtual env
 venv
+.venv
 # python files
 *.pyc
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+# mutation testing (mutmut)
+mutants/

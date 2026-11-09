@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dnnga"
+version = "0.2.0"
+description = "Genetic-algorithm neural architecture search: evolve a DNN's layers/neurons instead of hand-tuning them."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.22"]
+
+[project.optional-dependencies]
+sklearn = ["scikit-learn>=1.1"]
+keras = ["tensorflow>=2.16"]
+dev = ["pytest>=7", "pytest-cov"]
+
+[project.scripts]
+dnnga = "dnnga.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mutmut]
+source_paths = ["src/dnnga/"]
+pytest_add_cli_args_test_selection = ["tests/"]
+# The Keras backend needs TensorFlow; its tests auto-skip in the mutation job, so
+# mutating it would only produce "no tests" noise.
+do_not_mutate = ["src/dnnga/backends/keras_backend.py"]
