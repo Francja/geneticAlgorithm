@@ -219,6 +219,19 @@ class TestSeed:
         assert not any(m is mine for m in fb.cleaned)
         assert len(fb.cleaned) > 0, "models the engine created itself must still be cleaned up"
 
+    def test_retrained_external_seed_winner_has_no_external_model_flag(self, tiny_data):
+        seed_model = FakeModel(Architecture((15, 15)))
+        res, fb = run(
+            make_cfg(population_size=6, final_training_epochs=77),
+            data=tiny_data,
+            seed=seed_model,
+            seed_fitness=100.0,
+        )
+        assert res.best_model is not seed_model
+        assert res.best_model.trained_epochs == 77
+        assert "external_model" not in res.best_individual.metadata
+        assert not any(m is seed_model for m in fb.cleaned)
+
     def test_seed_outside_bounds_raises_helpful_error(self, tiny_data):
         with pytest.raises(InvalidArchitectureError, match="seed"):
             run(make_cfg(max_neurons=20), data=tiny_data, seed=[1000])
@@ -369,6 +382,39 @@ class TestCachingCleanupRetrain:
 
         res, _ = run(make_cfg(final_training_epochs=77), FailOnFinal(), tiny_data)
         assert res.best_model.trained_epochs == 5
+
+    def test_failed_final_retrain_cleans_up_the_model_it_built(self, tiny_data):
+        class FailOnFinal(FakeBackend):
+            def __init__(self):
+                super().__init__()
+                self.built = []
+
+            def build(self, architecture, data):
+                model = super().build(architecture, data)
+                self.built.append(model)
+                return model
+
+            def train(self, model, data, epochs):
+                if epochs == 77:
+                    raise RuntimeError("OOM")
+                return super().train(model, data, epochs)
+
+        res, fb = run(make_cfg(final_training_epochs=77), FailOnFinal(), tiny_data)
+
+        returned = {id(res.best_model)}
+        returned.update(
+            id(ind.model) for ind in res.final_population if ind.model is not None
+        )
+        leaked = [
+            m
+            for m in fb.built
+            if not any(m is c for c in fb.cleaned) and id(m) not in returned
+        ]
+        assert leaked == [], "every engine-built model not returned must be cleaned up"
+
+        final_retrain_models = [m for m in fb.built if m.trained_epochs == 0]
+        assert len(final_retrain_models) == 1
+        assert any(final_retrain_models[0] is m for m in fb.cleaned)
 
     def test_failed_final_retrain_raises_under_raise_policy(self, tiny_data):
         class FailOnFinal(FakeBackend):

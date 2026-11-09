@@ -543,6 +543,7 @@ class GeneticArchitectureSearch:
             cfg.epochs_per_candidate,
         )
 
+        model = None
         try:
             model = self.backend.build(best.architecture, data)
             model = self._train(model, data, epochs)
@@ -551,6 +552,8 @@ class GeneticArchitectureSearch:
                 raise EvaluationError(f"non-finite score ({raw}) after {why}")
         except Exception as exc:
             # noqa: BLE001
+            if model is not None and model is not best.model:
+                self._safe_cleanup(model)
             if best.model is not None and cfg.on_evaluation_error != "raise":
                 logger.warning(
                     "%s failed (%r); returning the search-trained model instead.",
@@ -570,11 +573,13 @@ class GeneticArchitectureSearch:
         }
         logger.info("%s result: %.4f (was %.4f)", why, raw, before)
 
+        metadata = {**best.metadata, "raw_score": raw, why: True}
+        metadata.pop("external_model", None)
         return Individual(
             architecture=best.architecture,
             fitness=raw * sign,
             model=model,
-            metadata={**best.metadata, "raw_score": raw, why: True},
+            metadata=metadata,
         )
 
 
