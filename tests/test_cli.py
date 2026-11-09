@@ -14,7 +14,7 @@ import sys
 import pytest
 
 import dnnga.cli as cli
-from dnnga import Architecture, __version__
+from dnnga import Architecture, InvalidArchitectureError, __version__
 from tests.conftest import FakeBackend
 
 
@@ -44,6 +44,18 @@ class TestParseSeedLayers:
     def test_empty_string_raises(self):
         with pytest.raises(ValueError, match="empty"):
             cli.parse_seed_layers("")
+
+
+class TestValidateSeed:
+    def test_none_and_in_bounds_seeds_pass(self):
+        config = cli._config_from_args(cli.build_arg_parser().parse_args([]))
+        cli.validate_seed(None, config)
+        cli.validate_seed([4, 4], config)
+
+    def test_a_seed_outside_the_bounds_is_rejected_before_compute(self):
+        config = cli._config_from_args(cli.build_arg_parser().parse_args([]))
+        with pytest.raises(InvalidArchitectureError, match="does not fit the search bounds"):
+            cli.validate_seed([100], config)
 
 
 # ------------------------------------------------------------ end-to-end runs
@@ -162,6 +174,30 @@ def test_invalid_config_exits_2_with_a_message_on_stderr(capsys):
     assert "dnnga: error:" in captured.err
     assert "population_size must be >= 2" in captured.err
     assert "Generation" not in captured.out  # nothing was computed
+
+
+def test_a_failed_search_exits_1_with_a_search_failed_message(monkeypatch, tiny_data, capsys):
+    """Exit 2 is for bad input; a run that fails mid-flight is exit 1."""
+    backend = FakeBackend(raise_for=lambda architecture: True)  # every candidate fails
+    monkeypatch.setattr(cli, "make_backend", lambda mode, random_state: backend)
+    monkeypatch.setattr(cli, "load_data", lambda mode, random_state: tiny_data)
+
+    assert cli.main(["--mode", "synthetic", "--population", "4", "--generations", "2"]) == 1
+    err = capsys.readouterr().err
+    assert "dnnga: search failed:" in err
+    assert "Every candidate evaluation" in err
+
+
+def test_unexpected_errors_are_not_swallowed(monkeypatch, tiny_data):
+    def boom(self, data, seed=None, seed_fitness=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(cli.GeneticArchitectureSearch, "run", boom)
+    monkeypatch.setattr(cli, "make_backend", lambda mode, random_state: FakeBackend())
+    monkeypatch.setattr(cli, "load_data", lambda mode, random_state: tiny_data)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        cli.main(["--mode", "synthetic", "--population", "4", "--generations", "1"])
 
 
 def test_bad_seed_layers_exits_2(capsys):

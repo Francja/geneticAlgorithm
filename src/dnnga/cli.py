@@ -43,12 +43,12 @@ from typing import List, Optional, Sequence
 import numpy as np
 
 from . import __version__
-from .architecture import Architecture
+from .architecture import Architecture, architecture_from_any, check_within_bounds
 from .backends.base import ModelBackend
 from .config import EvolutionConfig
 from .data import TrainingData
 from .engine import GeneticArchitectureSearch
-from .exceptions import DnnGaError
+from .exceptions import DnnGaError, InvalidArchitectureError
 from .logging_utils import configure_logging
 
 MODES = ("synthetic", "sklearn", "keras")
@@ -242,6 +242,32 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def validate_seed(seed: Optional[List[int]], config: EvolutionConfig) -> None:
+    """Reject a seed that does not fit the search bounds before any compute.
+
+    The engine repeats this check at the start of ``run()``; doing it here too
+    keeps the CLI's exit codes honest -- a bad argument is a setup error (exit
+    2), not a failed search (exit 1).
+    """
+    if seed is None:
+        return
+    architecture = architecture_from_any(seed)
+    try:
+        check_within_bounds(
+            architecture,
+            min_layers=config.min_layers,
+            max_layers=config.max_layers,
+            min_neurons=config.min_neurons,
+            max_neurons=config.max_neurons,
+        )
+    except InvalidArchitectureError as exc:
+        raise InvalidArchitectureError(
+            f"The seed does not fit the search bounds: {exc} Widen "
+            f"--min-layers/--max-layers/--min-neurons/--max-neurons to cover "
+            f"{architecture}."
+        ) from None
+
+
 def _config_from_args(args: argparse.Namespace) -> EvolutionConfig:
     # Constructing the config validates every value up front, before any compute.
     return EvolutionConfig(
@@ -262,22 +288,38 @@ def _config_from_args(args: argparse.Namespace) -> EvolutionConfig:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    """Run one search; return the process exit code.
+
+    0 = success. 2 = setup error (bad arguments, an invalid config, a missing
+    framework, unusable data): nothing was computed, and the reason is on
+    stderr. 1 = the search itself failed after compute was attempted. Anything
+    else (a bug, ``KeyboardInterrupt``) propagates untouched.
+    """
     args = build_arg_parser().parse_args(argv)
     logger = configure_logging(
         level=logging.DEBUG if args.verbose else logging.INFO, filepath=args.log_file
     )
 
+    # Setup: every failure here happens before any training, so it is a usage
+    # problem (exit 2) rather than a failed run.
     try:
         seed = parse_seed_layers(args.seed_layers)
         config = _config_from_args(args)
+        validate_seed(seed, config)
         backend = make_backend(args.mode, args.seed)
         data = load_data(args.mode, args.seed)
-        result = GeneticArchitectureSearch(backend, config).run(data, seed=seed)
     except (DnnGaError, ValueError) as exc:
         # Everything dnnga raises deliberately is a DnnGaError; a bad CLI value
         # surfaces as ValueError. Both mean "nothing was computed, fix the input".
         print(f"dnnga: error: {exc}", file=sys.stderr)
         return 2
+
+    # The search: compute was attempted, so a failure is exit 1, not 2.
+    try:
+        result = GeneticArchitectureSearch(backend, config).run(data, seed=seed)
+    except DnnGaError as exc:
+        print(f"dnnga: search failed: {exc}", file=sys.stderr)
+        return 1
 
     logger.info(
         "Stopped after %d generation(s): %s",

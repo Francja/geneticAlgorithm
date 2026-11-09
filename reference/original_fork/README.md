@@ -10,5 +10,5 @@
   copy: fixes the syntax error, adds file logging and a `STEPS` variable.
 
 These are not used by anything under `src/` or `tests/` — they're kept only
-so the bug fixes documented in the top-level `README.md` can be traced back
+so the bug fixes documented in `docs/CODE_REVIEW.md` can be traced back
 to the exact original code they were found in.
