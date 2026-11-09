@@ -20,3 +20,10 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.mutmut]
+source_paths = ["src/dnnga/"]
+pytest_add_cli_args_test_selection = ["tests/"]
+# The Keras backend needs TensorFlow; its tests auto-skip in the mutation job, so
+# mutating it would only produce "no tests" noise.
+do_not_mutate = ["src/dnnga/backends/keras_backend.py"]
