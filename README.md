@@ -594,6 +594,19 @@ released. Planned work is tracked in GitHub issues:
 | Error handling | #15 |
 | CI coverage | #4 (minimum dependencies), #5 (no extras), #6 (ruff/mypy), #7 (Python 3.14, Windows/macOS), #8 (README examples), #10 (security scans), #11 (Dependabot), #12 (upstream canary), #13 (timeouts) |
 
+Issues and PRs carry labels on five axes:
+
+| Prefix | Values | Meaning |
+|---|---|---|
+| `type:` | `bug`, `feature`, `test`, `ci`, `docs`, `release`, `security`, `chore` | what kind of work it is |
+| `area:` | `engine`, `config`, `operators`, `backends`, `data`, `history`, `cli`, `packaging`, `ci`, `docs`, `tests` | which part of the repo it touches |
+| `priority:` | `P0` (blocker) … `P3` (nice to have) | order of work |
+| `status:` | `needs decision`, `blocked`, `ready`, `in progress` | whether it can be picked up |
+| `effort:` | `S` (< 1 day), `M` (days), `L` (week+) | rough size |
+
+`epic` marks an umbrella issue tracked through sub-issues (#14);
+`good first issue` marks small, self-contained tasks.
+
 ## Authors, citation and license
 
 **Thesis and original code:** Adam Bielewicz, Wojciech Woźniak (2021).
