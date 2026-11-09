@@ -211,6 +211,14 @@ class TestSeed:
         assert res.best_model is not seed_model  # retrained from scratch
         assert res.history.records[0].n_evaluated == 6
 
+    def test_a_model_the_caller_passed_in_is_never_handed_to_backend_cleanup(self, tiny_data):
+        # cleanup() is a resource-freeing hook (e.g. GPU memory); running it on an object the
+        # engine did not create would damage the caller's model.
+        mine = FakeModel(Architecture((3, 3)))          # true score is -24, so better candidates displace it
+        res, fb = run(make_cfg(n_generations=6, population_size=8), data=tiny_data, seed=mine, seed_fitness=-24.0)
+        assert not any(m is mine for m in fb.cleaned)
+        assert len(fb.cleaned) > 0, "models the engine created itself must still be cleaned up"
+
     def test_seed_outside_bounds_raises_helpful_error(self, tiny_data):
         with pytest.raises(InvalidArchitectureError, match="seed"):
             run(make_cfg(max_neurons=20), data=tiny_data, seed=[1000])

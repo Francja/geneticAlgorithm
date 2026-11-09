@@ -294,6 +294,9 @@ class GeneticArchitectureSearch:
                 ind.fitness = raw * sign
                 ind.metadata["raw_score"] = raw
                 ind.model = seed_model
+                if seed_model is not None:
+                    # owned by the caller, not by the engine: never pass it to backend.cleanup()
+                    ind.metadata["external_model"] = True
                 if cfg.cache_evaluations:
                     cache[seed_arch] = (raw, ind.fitness)
             population.append(ind)
@@ -489,7 +492,10 @@ class GeneticArchitectureSearch:
             keep.add(id(best_ever.model))
         for ind in old:
             if ind.model is not None and id(ind.model) not in keep:
-                self._safe_cleanup(ind.model)
+                # Dropping our reference to a caller-supplied model is fine; running a backend's
+                # resource-freeing hook on it would damage an object the engine does not own.
+                if not ind.metadata.get("external_model"):
+                    self._safe_cleanup(ind.model)
                 ind.model = None
 
     def _safe_cleanup(self, model: Any) -> None:

@@ -68,5 +68,9 @@ class ModelBackend(ABC):
 
     def cleanup(self, model: Any) -> None:
         """Optional hook called for models that lost the competition and are
-        about to be dropped (e.g. to free GPU memory). Default: no-op."""
+        about to be dropped (e.g. to free GPU memory). Default: no-op.
+
+        A model the caller passed in as the search seed is never given to this hook:
+        the engine only cleans up models it created itself.
+        """
         return None
