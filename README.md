@@ -16,6 +16,55 @@ see [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md).
 > `population_size × n_generations` trainings (less with the built-in cache and
 > elitism). It is a search tool, not a free lunch.
 
+## How it works
+
+`dnnga` treats a network's **structure** as a genome — the tuple of hidden-layer
+widths, e.g. `(64, 32, 16)` — and evolves a population of such genomes. Each
+candidate is built, trained briefly and scored on the **validation** split; the
+best ones are kept and recombined until a stopping criterion fires. The winner
+is optionally retrained with a full budget and scored once on the **test**
+split, which is never used for selection.
+
+```mermaid
+flowchart TD
+    IN(["Input: seed model or layer list, TrainingData, backend"]) --> CFG["Validate EvolutionConfig<br/>(layers_delta / neurons_delta → min/max bounds)"]
+    CFG --> INIT["Generation 0:<br/>seed + random architectures within bounds"]
+    INIT --> EVAL
+
+    subgraph EVAL ["Evaluate population"]
+        direction TB
+        K{"Fitness already known?<br/>(elite or seed_fitness)"} -- no --> C{"Architecture<br/>in cache?"}
+        C -- no --> T["build → train for epochs_per_candidate<br/>→ evaluate on validation split"]
+        T -- "error / NaN" --> ERR["on_evaluation_error:<br/>penalize · skip · raise"]
+        C -- yes --> R["Reuse cached score"]
+        K -- yes --> KEEP["Keep score"]
+    end
+
+    EVAL --> SORT["Sort by fitness, update best-so-far,<br/>record generation in RunHistory"]
+    SORT --> STOP{"Stop?<br/>target_fitness reached ·<br/>stagnation_generations ·<br/>n_generations"}
+    STOP -- no --> ELITE["Copy top elitism_count unchanged"]
+    ELITE --> SEL["Select parents<br/>(tournament / roulette)"]
+    SEL --> X["Crossover with p_crossover<br/>(single_point / uniform / none)"]
+    X --> MUT["Mutate with mutation_rate — one of:<br/>tweak_neurons · add_layer · remove_layer"]
+    MUT --> EVAL
+    STOP -- yes --> FIN["Retrain winner for final_training_epochs<br/>(if set)"]
+    FIN --> TEST["Score winner once on test split<br/>(if given)"]
+    TEST --> OUT(["EvolutionResult:<br/>best_model, best_architecture,<br/>best_fitness, test_score, history"])
+```
+
+* **Genotype** — `Architecture((64, 32, 16))`: hidden-layer widths only
+  (input/output sizes come from the data). Immutable.
+* **Mutation** (with probability `mutation_rate`, exactly one of):
+  `tweak_neurons` (width ± up to `neuron_mutation_step`, clamped), `add_layer`
+  (random width, random position), `remove_layer`. Operators that are
+  infeasible at the current depth are skipped.
+* **Fitness** — whatever your backend's `evaluate` returns on the validation
+  split; set `direction="minimize"` for losses.
+* **Efficiency** — elites are never re-trained; `cache_evaluations` reuses the
+  score of an architecture seen before (duplicates become common as the
+  population converges); `epochs_per_candidate` is a cheap proxy,
+  `final_training_epochs` spends the real budget once.
+
 ## Install
 
 ```bash
@@ -103,55 +152,70 @@ generation 0 already contains a candidate at 1.000 validation accuracy. It does
 show the selection bias, though: the winner scored 1.000 during the search, and
 the same architecture trained properly scores 0.967 on validation and on test.
 
-## How it works
+## Software variables
 
-* **Genotype** — `Architecture((64, 32, 16))`: hidden-layer widths only
-  (input/output sizes come from the data). Immutable.
-* **Loop** — random population (your seed is one member) → train + score every
-  new candidate → stop on target / stagnation / max generations → keep the
-  `elitism_count` best unchanged → select parents (tournament by default) →
-  crossover → mutate → repeat.
-* **Mutation** (with probability `mutation_rate`, exactly one of):
-  `tweak_neurons` (width ± up to `neuron_mutation_step`, clamped), `add_layer`
-  (random width, random position), `remove_layer`. Operators that are
-  infeasible at the current depth are skipped.
-* **Fitness** — whatever your backend's `evaluate` returns on the validation
-  split; set `direction="minimize"` for losses.
-* **Efficiency** — elites are never re-trained; `cache_evaluations` reuses the
-  score of an architecture seen before (duplicates become common as the
-  population converges); `epochs_per_candidate` is a cheap proxy,
-  `final_training_epochs` spends the real budget once.
+### `evolve_architecture(seed, data, backend, config=None, **kwargs)`
 
-## `EvolutionConfig` reference
+| Argument | Type | Default | Meaning |
+|---|---|---|---|
+| `seed` | model, `Architecture` or `list[int]` | — | starting network; only its structure is used |
+| `data` | `TrainingData` | — | train / validation (+ optional test) arrays |
+| `backend` | `ModelBackend` | — | `SklearnMLPBackend`, `KerasMLPBackend` or your own |
+| `config` | `EvolutionConfig` | `EvolutionConfig()` | base settings; keyword arguments override it |
+| `seed_fitness` | `float` | `None` | known score of the seed; skips retraining it |
+| `layers_delta` | `(int, int)` | `None` | depth range relative to the seed, e.g. `(-1, 2)` |
+| `neurons_delta` | `(int, int)` | `None` | width range relative to the seed's smallest / largest layer |
+| `return_result` | `bool` | `False` | return the full `EvolutionResult` instead of the model |
+| `**config_overrides` | — | — | any `EvolutionConfig` field below |
 
-| Field | Default | Meaning |
-|---|---|---|
-| `min_layers` / `max_layers` | 1 / 6 | depth range |
-| `min_neurons` / `max_neurons` | 1 / 64 | width range, every layer |
-| `population_size` | 20 | any integer ≥ 2 |
-| `n_generations` | 20 | hard cap |
-| `epochs_per_candidate` | 20 | training epochs per candidate (the old `STEPS`, but in epochs) |
-| `final_training_epochs` | `None` | retrain the winner from scratch with this budget |
-| `target_fitness` | `None` | stop when reached (in the metric's own units) |
-| `stagnation_generations` / `stagnation_min_delta` | 10 / 1e-4 | stop after this many generations without a credited improvement |
-| `direction` | `"maximize"` | `"minimize"` for loss-like metrics |
-| `selection_strategy` / `tournament_size` | `"tournament"` / 3 | `"roulette"` also available (scale-sensitive; see docstring) |
-| `elitism_count` | 1 | top-k carried over unchanged, never re-trained |
-| `crossover_strategy` / `p_crossover` | `"single_point"` / 0.8 | `"uniform"`, `"none"` |
-| `mutation_rate` | 0.2 | per-individual chance of one mutation |
-| `neuron_mutation_step` | 4 | max width change per tweak (original: always 1) |
-| `mutation_boundary_mode` | `"clamp"` | `"wrap"` reproduces the original's wrap-around |
-| `mutation_operator_weights` | tweak .7 / add .15 / remove .15 | relative operator frequencies |
-| `cache_evaluations` | `True` | reuse scores of repeated architectures (noisy backends: one draw per architecture is kept) |
-| `on_evaluation_error` | `"penalize"` | `"raise"` / `"skip"` — see below |
-| `random_state` | `None` | seeds the GA; seed your backend too for full reproducibility |
+### `TrainingData`
 
-Original → new: `MIN_LAYER/MAX_LAYER` → `min_layers/max_layers` ·
-`MAX_NEURONS` → `max_neurons` · `POPULATION` → `population_size` ·
-`GENERATIONS` → `n_generations` · `TARGET_SCORE` → `target_fitness` ·
-`MUTATION_CHANCE` → `mutation_rate` · `NO_EVOLVE_GENS` →
-`stagnation_generations` · `STEPS` → `epochs_per_candidate` (estimator gradient
-*steps* ≠ epochs; don't copy the number).
+| Field | Meaning |
+|---|---|
+| `X_train`, `y_train` | used to train every candidate |
+| `X_val`, `y_val` | used to score and **select** candidates |
+| `task` | `"classification"` (default) or `"regression"` |
+| `X_test`, `y_test` (optional) | scored once, on the winner only → `result.test_score` |
+
+### `EvolutionConfig`
+
+| Field | Type | Default | Original name | Meaning |
+|---|---|---|---|---|
+| `min_layers` / `max_layers` | `int` | 1 / 6 | `MIN_LAYER` / `MAX_LAYER` | depth range |
+| `min_neurons` / `max_neurons` | `int` | 1 / 64 | (fixed 1) / `MAX_NEURONS` | width range, every layer |
+| `population_size` | `int` | 20 | `POPULATION` | any integer ≥ 2 |
+| `n_generations` | `int` | 20 | `GENERATIONS` | hard cap on generations |
+| `epochs_per_candidate` | `int` | 20 | `STEPS`* | training epochs per candidate |
+| `final_training_epochs` | `int \| None` | `None` | — | retrain the winner from scratch with this budget |
+| `target_fitness` | `float \| None` | `None` | `TARGET_SCORE` | stop when reached (metric's own units) |
+| `stagnation_generations` | `int \| None` | 10 | `NO_EVOLVE_GENS` | stop after this many generations without improvement |
+| `stagnation_min_delta` | `float` | 1e-4 | — | smallest change that counts as improvement |
+| `direction` | `"maximize" \| "minimize"` | `"maximize"` | — | `"minimize"` for loss-like metrics |
+| `selection_strategy` | `"tournament" \| "roulette"` | `"tournament"` | (roulette) | parent selection; roulette is scale-sensitive |
+| `tournament_size` | `int` | 3 | — | contestants per tournament |
+| `elitism_count` | `int` | 1 | — | top-k carried over unchanged, never re-trained |
+| `crossover_strategy` | `"single_point" \| "uniform" \| "none"` | `"single_point"` | — | how two parents are combined |
+| `p_crossover` | `float` | 0.8 | — | probability a parent pair is crossed over |
+| `mutation_rate` | `float` | 0.2 | `MUTATION_CHANCE` | per-individual chance of one mutation |
+| `neuron_mutation_step` | `int` | 4 | (always 1) | max width change per tweak |
+| `mutation_boundary_mode` | `"clamp" \| "wrap"` | `"clamp"` | (wrap) | `"wrap"` reproduces the original's wrap-around |
+| `mutation_operator_weights` | `dict` | tweak .7 / add .15 / remove .15 | — | relative operator frequencies |
+| `cache_evaluations` | `bool` | `True` | — | reuse scores of repeated architectures (noisy backends keep one draw) |
+| `on_evaluation_error` | `"penalize" \| "raise" \| "skip"` | `"penalize"` | — | what to do when a candidate fails — see below |
+| `random_state` | `int \| None` | `None` | — | seeds the GA; seed your backend too for full reproducibility |
+
+\* `STEPS` were estimator gradient *steps*, not epochs — don't copy the number.
+
+### `EvolutionResult` (with `return_result=True`)
+
+| Attribute | Meaning |
+|---|---|
+| `best_model` | trained winning model (same framework as the backend) |
+| `best_architecture` | winning `Architecture`, e.g. `Architecture([16, 3])` |
+| `best_fitness` | winner's **validation** score — optimistically biased |
+| `test_score` | winner's held-out test score, if a test split was given — report this one |
+| `history` | `RunHistory`: per-generation best / mean / worst / best-so-far / trainings / cache hits / failures, `stop_reason`; `.to_json()`, `.to_csv()`, `.summary_text()` |
+| `final_population` | last generation's individuals |
 
 ## Error handling and logging
 
